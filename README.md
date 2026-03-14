@@ -17,6 +17,7 @@ A seasoning is not code — it's instructions. Hand one to Claude alongside your
 | Name | Description |
 |------|-------------|
 | [haptics](seasonings/haptics.md) | iOS Taptic Engine feedback via hidden switch input |
+| [pin_gate](seasonings/pin_gate.md) | 4-digit PIN entry screen with on-screen numpad and Fibonacci lockout |
 
 ## Usage
 
