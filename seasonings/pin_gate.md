@@ -1,7 +1,7 @@
 # Seasoning: PIN Gate
 
 ## What it does
-Replaces a password input with a 4-digit PIN entry screen for EPS web apps and PWAs. Features an on-screen numpad, dot indicators, auto-submit on the 4th digit, and a Fibonacci lockout after 3 failed attempts. Designed to feel native on iOS.
+Replaces a password input with a 4-digit PIN entry screen for EPS web apps and PWAs. Features an on-screen numpad, dot indicators, auto-submit on the 4th digit, a shake animation on wrong PIN, and a Fibonacci lockout after 3 failed attempts. Designed to feel native on iOS.
 
 ## Why this works
 Keyboard-based password inputs are hostile in PWA standalone mode — they pop the keyboard, obscure the screen, and feel like a website, not an app. A fixed numpad keeps the UI fully in control of the app, works well with thumbs, and pairs naturally with iOS/Android PWA full-screen mode. Fibonacci lockout provides meaningful brute-force resistance without a fixed cap.
@@ -65,6 +65,22 @@ The gate assumes these CSS custom properties exist in `:root`. Adjust values to 
 .gate-dot.filled { background: var(--accent); border-color: var(--accent); }
 .gate-dot.error  { background: #e05252;        border-color: #e05252; }
 .gate-dot.locked { background: var(--text-dim); border-color: var(--text-dim); }
+
+/* Shake animation — plays on wrong PIN */
+@keyframes gate-shake {
+  0%   { transform: translateX(0); }
+  15%  { transform: translateX(-8px); }
+  30%  { transform: translateX(7px); }
+  45%  { transform: translateX(-6px); }
+  60%  { transform: translateX(5px); }
+  75%  { transform: translateX(-3px); }
+  90%  { transform: translateX(2px); }
+  100% { transform: translateX(0); }
+}
+#gate-dots.shake {
+  animation: gate-shake 0.45s ease;
+}
+
 #gate-pad {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -122,7 +138,7 @@ The gate assumes these CSS custom properties exist in `:root`. Adjust values to 
 ```
 
 ### 4. Add gate JS
-Replace `submitPin()` with whatever your app does on successful auth (e.g. store token, open WebSocket, fetch data).
+`submitPin()` starts your auth action but does **not** hide the gate — the gate only disappears once the server confirms success (e.g. `onopen` for a WebSocket). This prevents the UI from flashing through to the app for a split second on a wrong PIN.
 
 ```js
 let pin = '';
@@ -178,9 +194,18 @@ function showGate() {
   document.getElementById('gate').style.display = 'flex';
 }
 
+function hideGate() {
+  document.getElementById('gate').style.display = 'none';
+}
+
 function pinError() {
   failCount++;
   updateDots('error');
+  // Shake the dots
+  const dotsEl = document.getElementById('gate-dots');
+  dotsEl.classList.remove('shake');
+  void dotsEl.offsetWidth; // force reflow so re-triggering works
+  dotsEl.classList.add('shake');
   if (failCount >= 3) {
     failCount = 0;
     const wait = nextFib();
@@ -192,6 +217,7 @@ function pinError() {
 
 function submitPin() {
   // ── Replace this with your app's auth action ──
+  // Do NOT hide the gate here. Hide it only after the server confirms success.
   // e.g. sessionStorage.setItem('token', pin); connect();
 }
 
@@ -243,14 +269,42 @@ function recordSuccess(ip) { loginState.delete(ip); }
 verifyClient: ({ req }, cb) => {
   const ip = req.socket.remoteAddress;
   const s = getState(ip);
-  if (Date.now() < s.lockedUntil) { cb(false, 429, 'Too Many Attempts'); return; }
+  if (Date.now() < s.lockedUntil) { cb(false, 429, 'Too Many Requests'); return; }
   const token = new URL(req.url, 'https://localhost').searchParams.get('token');
   if (token === SECRET) { recordSuccess(ip); cb(true); }
   else { recordFailure(ip); cb(false, 401, 'Unauthorized'); }
 }
 ```
 
-Call `pinError()` client-side when the server rejects auth (e.g. WebSocket close code 4000 or 401).
+### 6. Wiring gate hide + pinError to server response (WebSocket pattern)
+The key insight: **`onopen` fires only if the PIN was correct**. Track a `wsConnected` flag to distinguish a bad token (handshake never opened) from a network drop (connection opened then closed).
+
+```js
+let wsConnected = false;
+
+// In your connect() function:
+ws.onopen = () => {
+  wsConnected = true;
+  hideGate(); // ← gate hidden here, not in submitPin()
+  // ... rest of setup
+};
+
+ws.onclose = () => {
+  const wasConnected = wsConnected;
+  wsConnected = false;
+  if (!wasConnected) {
+    // Handshake was rejected — bad token
+    sessionStorage.removeItem('token');
+    showGate();
+    pinError(); // ← shake + red dots
+  } else if (!intentionalClose) {
+    // Was connected, then dropped — reconnect silently
+    reconnectTimer = setTimeout(connect, 2000);
+  }
+};
+```
+
+This pattern also means a network blip while you're logged in will silently reconnect rather than kicking you back to the PIN screen.
 
 ## Customization
 - **PIN length** — change the `4` in `pin.length >= 4` and add/remove `.gate-dot` elements
@@ -258,16 +312,18 @@ Call `pinError()` client-side when the server rejects auth (e.g. WebSocket close
 - **Logo text** — set `#gate-logo` content to your app name
 - **Colors** — override `--accent`, `--surface`, `--border` in `:root`
 - **Key size** — adjust `height: 56px` and `font-size: 20px` on `.pad-key`
+- **Shake intensity** — adjust the `translateX` values in `@keyframes gate-shake`
 
 ## Guidelines
 - Store the PIN server-side in an env var, not in client code
-- Call `pinError()` any time the server signals a failed auth attempt
+- Never hide the gate in `submitPin()` — only hide it on confirmed server success
 - Call `showGate()` whenever the session expires or the user logs out
-- Do not call `haptic()` on pinError — the red flash is feedback enough; haptic on success only
+- Do not call `haptic()` on `pinError` — the red flash + shake is feedback enough; haptic on success only
 
 ## Notes
 - Auto-submits on the 4th digit — no submit button needed
 - Lockout sequence: 3 fails → 1s, next 3 → 1s, next 3 → 2s, 3s, 5s, 8s, 13s…
+- `void dotsEl.offsetWidth` forces a reflow so the shake animation re-triggers on repeated wrong PINs
 - `padLocked` guard prevents race conditions if the user taps during the error animation
 - Works in PWA standalone mode — no keyboard, no native popups
 - Reference implementation: [palantir](https://github.com/nickagliano/palantir)
