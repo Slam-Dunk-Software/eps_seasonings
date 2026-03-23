@@ -1,4 +1,4 @@
-# Seasoning: Haptics
+# Mod: Haptics
 
 ## What it does
 Adds tactile haptic feedback on iOS (iPhone/iPad) for user-initiated actions in EPS web apps and PWAs. Uses the iOS Taptic Engine via a hidden `<input type="checkbox" switch>` element — clicking the label programmatically fires a native haptic pulse.

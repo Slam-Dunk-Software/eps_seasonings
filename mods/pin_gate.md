@@ -1,4 +1,4 @@
-# Seasoning: PIN Gate
+# Mod: PIN Gate
 
 ## What it does
 Replaces a password input with a 4-digit PIN entry screen for EPS web apps and PWAs. Features an on-screen numpad, dot indicators, auto-submit on the 4th digit, a shake animation on wrong PIN, and a Fibonacci lockout after 3 failed attempts. Designed to feel native on iOS.
